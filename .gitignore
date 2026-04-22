@@ -1,0 +1,7 @@
+auth/
+*.db
+config.json
+bridge.log
+__pycache__/
+*.pyc
+whatsapp-claude
