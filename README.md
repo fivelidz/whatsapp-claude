@@ -1,58 +1,56 @@
 # whatsapp-claude
 
-**Connect WhatsApp to Claude AI.** Send a WhatsApp message, get an AI reply.
+> **Send a WhatsApp message → get a reply from Claude AI.**  
+> Self-hosted. No cloud middleman. Runs on a Raspberry Pi or any Linux box.
 
-Built by [Qalarc](https://qalarc.com) — the AI consulting arm of DOOF.ING.
-
----
-
-## What This Is
-
-A minimal, self-hosted bridge that:
-
-1. Connects your WhatsApp number as a Linked Device (WhatsApp Web protocol)
-2. Listens for incoming messages in real time
-3. Passes them to [Claude Code](https://www.anthropic.com/claude-code) via the CLI
-4. Sends Claude's response back to the sender
-
-No cloud service. No third-party API keys (beyond WhatsApp and Claude). Runs on any Linux machine.
+Built by [Qalarc](https://qalarc.com) — open sourced for anyone to use.
 
 ---
 
-## Architecture
+## How It Works
 
 ```
-WhatsApp servers (WebSocket / E2E encrypted)
-        │
-        ▼
-whatsapp-claude  (Go binary, built on whatsmeow)
-  ─ login / receive / send subcommands
-  ─ emits newline-delimited JSON to stdout
-        │  stdout
-        ▼
-bridge.py  (Python)
-  ─ spawns whatsapp-claude receive as subprocess
-  ─ parses incoming message JSON
-  ─ calls:  claude --print "<message>"
-  ─ sends response back via whatsapp-claude send
+You send a WhatsApp message
+        ↓
+whatsapp-claude (Go binary using whatsmeow)
+  connects as a Linked Device, receives the message
+        ↓
+bridge.py (Python)
+  passes the message to Claude CLI:  claude --print "your message"
+        ↓
+Claude responds
+        ↓
+bridge.py sends the reply back via WhatsApp
+        ↓
+You receive Claude's response in WhatsApp
 ```
 
-The Go binary (`whatsapp_cli/main.go`) handles the WhatsApp protocol.  
-The Python bridge (`bridge.py`) handles Claude and your custom logic.
+That's it. Two moving parts — a Go binary that handles the WhatsApp protocol, and a Python script that calls Claude.
+
+---
+
+## What You Can Build With This
+
+- **Personal AI assistant** on your own WhatsApp number — text it from anywhere
+- **Public chatbot** — anyone who messages your number gets an AI reply
+- **Custom onboarding flows** — state machine conversations for new users
+- **Business automations** — intake forms, FAQs, booking flows over WhatsApp
+
+We use this at [DOOF.ING](https://doof.ing) to let DJs text a WhatsApp number and automatically get an AI-generated profile page built for them.
 
 ---
 
 ## Prerequisites
 
-| Tool | Install |
-|------|---------|
-| Go 1.21+ | [go.dev/dl](https://go.dev/dl/) |
-| Python 3.9+ | System package manager |
-| Claude Code CLI | [anthropic.com/claude-code](https://www.anthropic.com/claude-code) |
-| A WhatsApp account | Linked Devices must be available on your plan |
+| Tool | Notes | Install |
+|------|-------|---------|
+| **Go 1.21+** | To compile the WhatsApp binary | [go.dev/dl](https://go.dev/dl/) |
+| **Python 3.9+** | For the bridge | System package manager |
+| **Claude Code CLI** | The AI engine | [anthropic.com/claude-code](https://www.anthropic.com/claude-code) |
+| **A WhatsApp number** | Used as a Linked Device (like WhatsApp Web) | Any WhatsApp account |
 
-> **Note:** This uses the unofficial WhatsApp Web protocol via [whatsmeow](https://github.com/tulir/whatsmeow).  
-> WhatsApp may ban numbers that use unofficial clients. Use a secondary number for testing.
+> ⚠️ **Important:** This uses the unofficial WhatsApp Web protocol via [whatsmeow](https://github.com/tulir/whatsmeow).
+> WhatsApp may ban numbers that automate messages. **Use a dedicated secondary number**, not your personal one.
 
 ---
 
@@ -60,108 +58,96 @@ The Python bridge (`bridge.py`) handles Claude and your custom logic.
 
 ```bash
 # 1. Clone
-git clone https://github.com/qalarc/whatsapp-claude
+git clone https://github.com/fivelidz/whatsapp-claude
 cd whatsapp-claude
 
-# 2. Build and configure
-chmod +x setup.sh
-./setup.sh
+# 2. Build the Go binary and create config
+chmod +x setup.sh && ./setup.sh
 
-# 3. Edit your config
+# 3. Edit config.json with your phone number
 nano config.json
 
-# 4. Login (scan QR code)
+# 4. Login — scan QR code with WhatsApp on your phone
+#    WhatsApp → Settings → Linked Devices → Link a Device
 ./whatsapp-claude login
 
-# 5. Start the bridge
+# 5. Run the bridge
 python3 bridge.py
 ```
 
+After step 5, anyone who messages your WhatsApp number gets a Claude reply.
+
 ---
 
-## Configuration
-
-Copy `config.example.json` to `config.json` and edit:
+## Configuration (`config.json`)
 
 ```json
 {
   "whatsapp": {
-    "account": "+15551234567",       // your WhatsApp number
-    "cli_path": "./whatsapp-claude", // path to compiled binary
-    "auth_dir": "./auth"             // session storage
+    "account": "+15551234567",
+    "cli_path": "./whatsapp-claude",
+    "auth_dir": "./auth"
   },
   "claude": {
     "path": "/usr/bin/claude",
     "timeout": 300,
-    "system_prompt": "You are a helpful assistant reachable via WhatsApp."
+    "system_prompt": "You are a helpful assistant reachable via WhatsApp. Be concise."
   },
   "users": {
     "+15551234567": {
       "name": "Your Name",
-      "role": "owner"               // gets full Claude access
+      "role": "owner"
     }
   },
   "owner_phone": "+15551234567"
 }
 ```
 
-### User Roles
+**Authorized users** (in the `users` list) get full Claude access — it behaves like a personal AI assistant.
 
-| Role | What they get |
-|------|--------------|
-| `owner` | Full Claude access, all capabilities |
-| (unlisted) | Goes through `process_public_message()` in `bridge.py` — customise this |
+**Everyone else** goes through `process_public_message()` in `bridge.py` — customise this with your own welcome flow, FAQ, onboarding, etc.
 
 ---
 
-## Customising the Public Flow
+## Customising What Public Users See
 
-Edit `process_public_message()` in `bridge.py` to control what happens when someone who isn't in your `users` list messages you:
+Edit `process_public_message()` in `bridge.py`:
 
 ```python
 def process_public_message(config, sender, message, sender_name=None):
-    # Add your own logic here:
-    # - FAQ bot
-    # - Onboarding flow
-    # - Intake form
-    # - Or just a "sorry, not available" message
-    return run_claude(message, config, system_prompt="Your custom system prompt")
+    # Replace this with whatever you want:
+    system_prompt = "You are a helpful assistant for Acme Corp. Answer questions about our products."
+    return run_claude(message, config, system_prompt=system_prompt)
 ```
+
+You can also build multi-step flows — track user state in a dict, ask questions, collect info. See [DOOF.ING](https://doof.ing) for an example of a full onboarding flow built on top of this.
 
 ---
 
-## Manual CLI Usage
+## CLI Commands
 
-The `whatsapp-claude` binary can also be used standalone:
+The compiled `whatsapp-claude` binary works standalone too:
 
 ```bash
-# Login
-./whatsapp-claude login
-
-# Listen (streams JSON to stdout)
-./whatsapp-claude receive
-
-# Send
-./whatsapp-claude send 15551234567 "Hello from the CLI"
-
-# Send a file
-./whatsapp-claude send-file 15551234567 ./report.pdf "Here's your report"
-
-# Check status
-./whatsapp-claude status
-
-# Logout
-./whatsapp-claude logout
+./whatsapp-claude login                        # Login via QR code
+./whatsapp-claude login                        # Or set WHATSAPP_PHONE=+15551234567 for pairing code
+./whatsapp-claude receive                      # Stream incoming messages as JSON
+./whatsapp-claude send 15551234567 "Hi there"  # Send a message
+./whatsapp-claude send-file 15551234567 ./file.pdf "Here's the doc"
+./whatsapp-claude status                       # Check connection
+./whatsapp-claude logout                       # Log out and clear session
 ```
 
 Environment variables:
-- `WHATSAPP_DATA_DIR` - where to store session data (default: `./auth`)
-- `WHATSAPP_PHONE` - phone number for pairing code login (alternative to QR)
-- `WHATSAPP_LOG_LEVEL` - log verbosity: `DEBUG`, `INFO`, `WARN` (default: `WARN`)
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `WHATSAPP_DATA_DIR` | `./auth` | Where session data is stored |
+| `WHATSAPP_PHONE` | — | Phone number for pairing code login |
+| `WHATSAPP_LOG_LEVEL` | `WARN` | `DEBUG` / `INFO` / `WARN` |
 
 ---
 
-## Running as a Service (systemd)
+## Running as a Background Service (systemd)
 
 ```ini
 # ~/.config/systemd/user/whatsapp-claude.service
@@ -174,50 +160,79 @@ WorkingDirectory=/path/to/whatsapp-claude
 ExecStart=/usr/bin/python3 /path/to/whatsapp-claude/bridge.py
 Restart=always
 RestartSec=10
+Environment=PYTHONUNBUFFERED=1
 
 [Install]
 WantedBy=default.target
 ```
 
 ```bash
-systemctl --user enable whatsapp-claude
-systemctl --user start whatsapp-claude
+systemctl --user enable --now whatsapp-claude
 journalctl --user -u whatsapp-claude -f
 ```
 
 ---
 
+## Project Structure
+
+```
+whatsapp-claude/
+├── whatsapp_cli/
+│   ├── main.go        ← Go binary: WhatsApp Web protocol (whatsmeow)
+│   └── go.mod
+├── bridge.py          ← Python: Claude integration + message routing
+├── config.example.json
+├── setup.sh           ← Builds Go binary, creates config
+└── auth/              ← WhatsApp session (gitignored, keep private)
+```
+
+---
+
+## Comparing with signal-claude
+
+| | whatsapp-claude | [signal-claude](https://github.com/fivelidz/signal-claude) |
+|---|---|---|
+| Reach | 2 billion+ users | Privacy-focused users |
+| Protocol | Unofficial (whatsmeow) | Official (signal-cli) |
+| Ban risk | Medium — use a secondary number | None |
+| Transport | Spawn process per send | Persistent socket connection |
+| Typing indicators | No | Yes |
+| Setup | Build Go binary + QR login | Install Java + signal-cli |
+
+---
+
 ## Privacy
 
-- Sender phone numbers are never logged in plain text. They are SHA-256 hashed before appearing in any log output.
-- WhatsApp session credentials are stored locally in `./auth/whatsapp.db` — keep this file private.
-- No data is sent to any third party beyond WhatsApp and Anthropic (Claude).
+- Phone numbers are **never logged in plaintext** — SHA-256 hashed in all log output
+- WhatsApp session stored locally in `./auth/whatsapp.db` — keep this file private, it's your login
+- No data sent anywhere except to WhatsApp and Anthropic (Claude)
 
 ---
 
 ## Limitations
 
-- **Unofficial protocol** - WhatsApp can ban numbers using non-official clients
-- **Single device** - One WhatsApp account = one linked device session
-- **No media download** - Attachment metadata is captured but content isn't downloaded by default
-- **Claude must be installed** - This calls `claude --print` as a subprocess; you need [Claude Code](https://www.anthropic.com/claude-code)
+- **Unofficial protocol** — whatsmeow reverse-engineers WhatsApp Web. WhatsApp can ban numbers. Use a secondary number.
+- **Single session** — one number, one linked device at a time
+- **Claude CLI required** — this calls `claude --print` as a subprocess. Install [Claude Code](https://www.anthropic.com/claude-code).
+- **No media download** — incoming image/audio/video metadata is captured but files aren't downloaded by default
 
 ---
 
 ## Built by Qalarc
 
-[Qalarc](https://qalarc.com) builds AI consulting tools and community platforms.  
-We use this bridge ourselves to run [DOOF.ING](https://doof.ing) — a community platform for DJs and artists — where people can text a WhatsApp number to create their own DJ profile page using AI.
+[Qalarc](https://qalarc.com) is an AI consulting studio. We build real AI integrations that solve real problems.
 
-**Want help building something similar?** [qalarc.com](https://qalarc.com)
+We run this bridge in production at [DOOF.ING](https://doof.ing) — a music community platform where DJs text a WhatsApp number to get an AI-generated artist profile page.
+
+**Need help building something like this?** → [qalarc.com](https://qalarc.com)
 
 ---
 
 ## Credits
 
-- [whatsmeow](https://github.com/tulir/whatsmeow) by Tulir Asokan — the Go WhatsApp Web library
+- [whatsmeow](https://github.com/tulir/whatsmeow) by Tulir Asokan — Go library for WhatsApp Web
 - [Claude Code](https://www.anthropic.com/claude-code) by Anthropic
 
 ## License
 
-MIT — use freely, attribution appreciated.
+MIT — free to use, fork, and build on. Attribution appreciated.
